@@ -4,7 +4,7 @@
   "description": "Telegram Gift Bot with UZS + Stars wallet",
   "main": "bot.js",
   "scripts": {
-    "start": "node bot.js",
+    "start": "node start.js",
     "sendgift": "node sendgift.js",
     "dev": "node bot.js"
   },
