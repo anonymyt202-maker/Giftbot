@@ -602,7 +602,6 @@ async function askGiftDelivery(ctx, payWith) {
         { parse_mode:'HTML', reply_markup:{ inline_keyboard:[
             [{ text:'👤 O\'zimga',         callback_data:'gdlv_self'   }],
             [{ text:'🎁 Do\'stga (username)', callback_data:'gdlv_friend' }],
-            [{ text:'🔗 Havola orqali',    callback_data:'gdlv_link'   }],
             [{ text:'⬅️ Orqaga', callback_data:`pick_${st.selGift.id}` }],
         ]}}
     );
