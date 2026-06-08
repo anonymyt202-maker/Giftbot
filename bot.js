@@ -22,7 +22,7 @@ const ADMIN_ID     = Number(process.env.ADMIN_ID    || 0);
 const API_ID       = Number(process.env.API_ID      || 0);
 const API_HASH     =        process.env.API_HASH     || '';
 const CARD_NUMBER  =        process.env.CARD_NUMBER  || '5614681256483730';
-const STARS_TO_UZS = Number(process.env.STARS_TO_UZS || 140); // 1 ⭐ = 140 UZS
+const STARS_TO_UZS = Number(process.env.STARS_TO_UZS || 150); // 1 ⭐ = 140 UZS
 const UZS_TO_STARS = 1 / STARS_TO_UZS;                        // 140 UZS = 1 ⭐
 
 const DB = {
@@ -33,7 +33,7 @@ const DB = {
     session : path.join(__dirname, 'tg_session.json'),
 };
 
-let REFERRAL_REWARD    = 2;
+let REFERRAL_REWARD    = 1;
 const REFERRAL_PCT     = 2;
 const DAILY_MS         = 864e5;
 const SLOT_JP          = 64;
