@@ -84,7 +84,7 @@ async function sendGiftGramJS(toUserId, tgGiftId, anonymous = false, message = n
         try {
             peer = await tgClient.getInputEntity(Number(toUserId));
         } catch {
-            return { ok: false, error: `Foydalanuvchi (${toUserId}) topilmadi. U bot bilan chat ochishi kerak.` };
+            return { ok: false, error: `Foydalanuvchi (${toUserId}) topilmadi. iltimos @it_d_user ga xabar yuborib qo'ying va qayta gift sotib oling.` };
         }
 
         // Izoh ob'ekti
@@ -503,7 +503,7 @@ bot.start(async ctx => {
                 );
             } else if (res.error === 'user_not_started') {
                 return ctx.reply(
-                    `❌ <b>Xato!</b>\n\nGift yuborish uchun siz avval @it_d_user ga xabar yuborishingiz kerak.\n\nSpam bo'lsangiz meni konktaktizga soxranit qiling\n\nOzim aloqaga chiqaman. `,
+                    `❌ <b>Xato!</b>\n\nGift yuborish uchun siz avval bot bilan chat ochgan bo'lishingiz kerak.\n\nBot bilan bir marta /start bosing, so'ng havolani qaytadan oching.`,
                     { parse_mode:'HTML' }
                 );
             } else {
