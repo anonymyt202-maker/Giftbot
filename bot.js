@@ -503,7 +503,7 @@ bot.start(async ctx => {
                 );
             } else if (res.error === 'user_not_started') {
                 return ctx.reply(
-                    `❌ <b>Xato!</b>\n\nGift yuborish uchun siz avval bot bilan chat ochgan bo'lishingiz kerak.\n\nBot bilan bir marta /start bosing, so'ng havolani qaytadan oching.`,
+                    `❌ <b>Xato!</b>\n\nGift yuborish uchun siz avval @it_d_user ga xabar yuborishingiz kerak.\n\nSpam bo'lsangiz meni konktaktizga soxranit qiling\n\nOzim aloqaga chiqaman. `,
                     { parse_mode:'HTML' }
                 );
             } else {
