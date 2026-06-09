@@ -1,6 +1,6 @@
 {
-  "name": "giftbot",
-  "version": "4.0.0",
+  "name": "giftbotv5",
+  "version": "5.0.0",
   "main": "bot.js",
   "scripts": { "start": "node bot.js" },
   "dependencies": {
