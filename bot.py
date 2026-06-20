@@ -2,18 +2,19 @@
 🤖 Telegram Avto-javob Userbot (Python / Telethon)
 ====================================================
 Bitta faylda: shaxsiy akkaunt (userbot) + boshqaruv bot.
+✨ YANGI: Admin permission tizimi ✅
 
 ✨ Imkoniyatlar:
+- 🔐 Admin ruxsat tizimi (bo'lajak userlar admin'dan ruxsat so'raydi)
 - 🟢🔴 Online/Offline rejim
 - 💬 Avto-javob (matni bot orqali tahrirlanadi)
-- ⏱ Moslashuvchan cooldown (1,2,3,4,5,10,30 daqiqa, 1 soat) yoki 🔂 "faqat 1 marta" (har bir user uchun alohida)
+- ⏱ Moslashuvchan cooldown (1,2,3,4,5,10,30 daqiqa, 1 soat) yoki 🔂 "faqat 1 marta"
 - ✏️🗑 Xabar tahrirlash/o'chirishni kuzatish va owner'ga bildirishnoma
 - 😀 Avto-reaksiya (🎲 random yoki ✍️ doimiy emoji)
 - 💾 Sessiya va foydalanuvchilar holati saqlanadi (data/ papkasi)
 
-🔐 LOGIN: telefon/kod/2FA parol TERMINALDA SO'RALMAYDI — hammasi
-boshqaruv bot chatida so'raladi, shu sababli hosting/deploy muhitida
-ham muammosiz ishlaydi.
+🔐 LOGIN: Har bir user o'z akkauntini login qilishi kerak
+📋 PERMISSION: Shunchaki /start bosdi → admin approve qilguniga qadar ishlamaydi
 """
 
 import os
@@ -53,7 +54,7 @@ def required_env(name: str) -> str:
 API_ID = int(required_env("API_ID"))
 API_HASH = required_env("API_HASH")
 BOT_TOKEN = required_env("BOT_TOKEN")
-OWNER_USERNAME = os.getenv("OWNER_USERNAME", "").strip().lstrip("@")
+OWNER_USERNAME = os.getenv("OWNER_USERNAME", "tgbop").strip().lstrip("@")
 SESSION_STRING = os.getenv("SESSION_STRING", "").strip()
 
 # ============================================================
@@ -67,6 +68,7 @@ SETTINGS_FILE = DATA_DIR / "settings.json"
 USERS_FILE = DATA_DIR / "users.json"
 CACHE_FILE = DATA_DIR / "cache.json"
 SESSION_FILE = DATA_DIR / "session.txt"
+PERMISSIONS_FILE = DATA_DIR / "permissions.json"
 
 MAX_CACHE_SIZE = 800
 
@@ -136,6 +138,48 @@ def reset_all_cycles():
     for key in users:
         users[key]["repliedThisCycle"] = False
     write_json(USERS_FILE, users)
+
+
+# ============================================================
+# 🔐 PERMISSION TIZIMI
+# ============================================================
+def get_permissions() -> dict:
+    """Admin tomonidan tasdiqlangan userlar listini olish"""
+    return read_json(PERMISSIONS_FILE, {})
+
+
+def is_user_approved(user_id) -> bool:
+    """Userga ruxsat bor-yo'qligini tekshirish"""
+    perms = get_permissions()
+    return perms.get(str(user_id), {}).get("approved", False)
+
+
+def add_pending_approval(user_id: int, user_info: dict):
+    """Yangi user'ni approval kutishiga qo'shish"""
+    perms = get_permissions()
+    perms[str(user_id)] = {
+        "approved": False,
+        "username": user_info.get("username", "noma'lum"),
+        "first_name": user_info.get("first_name", ""),
+        "last_name": user_info.get("last_name", ""),
+        "request_time": time.time(),
+    }
+    write_json(PERMISSIONS_FILE, perms)
+
+
+def approve_user(user_id: int):
+    """Admin user'ni tasdiqlash"""
+    perms = get_permissions()
+    if str(user_id) in perms:
+        perms[str(user_id)]["approved"] = True
+        write_json(PERMISSIONS_FILE, perms)
+
+
+def deny_user(user_id: int):
+    """Admin user'ni rad etish"""
+    perms = get_permissions()
+    perms.pop(str(user_id), None)
+    write_json(PERMISSIONS_FILE, perms)
 
 
 def get_cache() -> dict:
@@ -235,190 +279,292 @@ async def ask_owner(prompt: str) -> str:
         raise RuntimeError("Owner hali botga /start bosmagan")
     loop = asyncio.get_event_loop()
     login_future = loop.create_future()
-    await bot_client.send_message(owner_chat_id, prompt)
-    return await login_future
+
+    try:
+        await notify_owner(prompt)
+        timeout = 300  # 5 min
+        result = await asyncio.wait_for(login_future, timeout=timeout)
+        return result
+    except asyncio.TimeoutError:
+        raise RuntimeError(f"Javob kutish vaqti tugadi ({timeout}s)")
+    finally:
+        login_future = None
 
 
-async def wait_for_owner_ready():
-    if get_settings().get("ownerChatId"):
-        return
-    print("⏳ Owner hali /start bosmagan, kutilmoqda...")
-    await owner_ready_event.wait()
-
-
-# ============================================================
-# 🎛 Boshqaruv bot — menyular
-# ============================================================
-COOLDOWN_OPTIONS = [
-    ("1 daqiqa ⏱", 60), ("2 daqiqa ⏱", 120), ("3 daqiqa ⏱", 180), ("4 daqiqa ⏱", 240),
-    ("5 daqiqa ⏱", 300), ("10 daqiqa ⏱", 600), ("30 daqiqa ⏱", 1800), ("1 soat ⏱", 3600),
-]
-
-
-def main_menu():
-    s = get_settings()
-    mode_label = "🟢 Online" if s.get("mode") == "online" else "🔴 Offline"
+def main_menu() -> list:
+    """Admin uchun asosiy menyusi"""
     return [
-        [Button.inline(f"🔁 Rejim: {mode_label} (bosib o'zgartirish)", b"toggle_mode")],
-        [Button.inline("✏️ Avto-javob matnini o'zgartirish", b"edit_reply")],
-        [Button.inline("⏱ Kutish vaqti (cooldown)", b"cooldown_menu")],
-        [Button.inline("😀 Reaksiya sozlamalari", b"reaction_menu")],
-        [Button.inline("📊 Holatni ko'rish", b"status")],
+        [Button.text("🔐 Login", resize=True)],
+        [Button.text("📱 Online/Offline", resize=True), Button.text("🔄 Yangilash", resize=True)],
+        [Button.text("💬 Avto-javob matni", resize=True)],
+        [Button.text("😀 Reaksiya", resize=True)],
+        [Button.text("⏱ Cooldown", resize=True)],
+        [Button.text("📋 Tasdiqlash kutilanayotganlar", resize=True)],
     ]
 
 
-def cooldown_menu():
-    rows = []
-    for i in range(0, len(COOLDOWN_OPTIONS), 2):
-        row = []
-        for label, seconds in COOLDOWN_OPTIONS[i:i + 2]:
-            row.append(Button.inline(label, f"set_cooldown_{seconds}".encode()))
-        rows.append(row)
-    rows.append([Button.inline("🔂 Faqat 1 marta (online↔offline sikli)", b"set_cooldown_once")])
-    rows.append([Button.inline("⬅️ Orqaga", b"back_main")])
-    return rows
-
-
-def reaction_menu():
-    s = get_settings()
-    react_label = "✅ Avto-reaksiya: Yoqilgan" if s.get("autoReactEnabled") else "❌ Avto-reaksiya: O'chirilgan"
+def user_menu() -> list:
+    """Oddiy user uchun menyusi"""
     return [
-        [Button.inline(react_label, b"toggle_react_enabled")],
-        [Button.inline("🎲 Random reaksiya rejimi", b"set_reaction_random")],
-        [Button.inline("✍️ Doimiy emoji belgilash", b"set_reaction_custom")],
-        [Button.inline("⬅️ Orqaga", b"back_main")],
+        [Button.text("🔐 Login", resize=True)],
+        [Button.text("📱 Online/Offline", resize=True), Button.text("🔄 Yangilash", resize=True)],
+        [Button.text("💬 Avto-javob matni", resize=True)],
     ]
 
 
-def status_text() -> str:
-    s = get_settings()
-    if s.get("cooldownMode") == "once":
-        cooldown_label = "Faqat 1 marta (sikl uchun) 🔂"
+@bot_client.on(events.NewMessage(pattern="/start"))
+async def start(event):
+    sender = await event.get_sender()
+    sender_id = sender.id
+    
+    if is_owner(sender):
+        # Admin
+        settings = get_settings()
+        if not settings.get("ownerChatId"):
+            save_settings({"ownerChatId": sender_id})
+        
+        await event.respond(
+            "👋 Xush kelibsiz, Admin! 🎯\n\n"
+            "Bu yerda o'zingizni Telegram akkauntini login qila olasiz va barcha imkoniyatlardan "
+            "foydalanishingiz mumkin.\n\n"
+            "⚠️ <b>Yangi userlar</b> uchun tasdiqlash kutilyapti? Tekshiring 👇",
+            buttons=main_menu(),
+            parse_mode="html"
+        )
     else:
-        cooldown_label = f"{round(s.get('cooldownSeconds', 300) / 60)} daqiqa ⏱"
-    reaction_label = s.get("fixedReaction") if s.get("reactionMode") == "fixed" else "🎲 Random"
-    mode_label = "🟢 Online" if s.get("mode") == "online" else "🔴 Offline"
-    react_state = "✅ Yoqilgan" if s.get("autoReactEnabled") else "❌ O'chirilgan"
-    return (
-        "📊 <b>Joriy sozlamalar</b>\n\n"
-        f"🔁 Rejim: {mode_label}\n"
-        f"💬 Avto-javob matni:\n<i>{escape_html(s.get('autoReplyText', ''))}</i>\n\n"
-        f"⏱ Kutish vaqti: {cooldown_label}\n"
-        f"😀 Avto-reaksiya: {react_state} ({reaction_label})"
-    )
-
-
-# ============================================================
-# 🎛 Boshqaruv bot — handlerlar
-# ============================================================
-@bot_client.on(events.NewMessage(pattern=r"^/start$", incoming=True))
-async def on_start(event):
-    sender = await event.get_sender()
-    if not is_owner(sender):
-        await event.respond("⛔️ Bu bot faqat o'z egasiga xizmat qiladi.")
-        return
-
-    if not get_settings().get("ownerChatId"):
-        save_settings({"ownerChatId": sender.id})
-        owner_ready_event.set()  # 🔐 login oqimi shu yerda kutib turgan bo'lishi mumkin
-
-    await event.respond(
-        "👋 <b>Salom!</b> Men sizning shaxsiy akkauntingizni boshqaruvchi botman 🤖✨\n\n"
-        "Quyidagi menyudan kerakli bo'limni tanlang 👇",
-        buttons=main_menu(),
-        parse_mode="html",
-    )
-
-
-@bot_client.on(events.CallbackQuery)
-async def on_callback(event):
-    sender = await event.get_sender()
-    if not is_owner(sender):
-        await event.answer("⛔️ Ruxsat yo'q", alert=True)
-        return
-
-    data = event.data.decode()
-    settings = get_settings()
-
-    try:
-        if data == "toggle_mode":
-            new_mode = "offline" if settings.get("mode") == "online" else "online"
-            save_settings({"mode": new_mode})
-            if new_mode == "offline":
-                reset_all_cycles()  # 🔄 yangi offline sikli boshlanadi
-            await event.edit(
-                f"✅ Rejim o'zgartirildi: {'🟢 Online' if new_mode == 'online' else '🔴 Offline'}\n\n📋 Asosiy menyu:",
-                buttons=main_menu(),
+        # Oddiy user
+        if is_user_approved(sender_id):
+            # Tasdiqlangan user
+            await event.respond(
+                f"✅ Xush kelibsiz, {build_display_name(sender)}! 🎉\n\n"
+                "Siz tasdiqlangan user ekansiz. O'zingizning akkauntini login qila olasiz:",
+                buttons=user_menu()
             )
-        elif data == "edit_reply":
-            pending_action[sender.id] = "reply_text"
-            await event.respond("✏️ Yangi avto-javob matnini yuboring 📝👇")
-        elif data == "cooldown_menu":
-            await event.edit("⏱ Kutish vaqtini tanlang:", buttons=cooldown_menu())
-        elif data.startswith("set_cooldown_"):
-            value = data.replace("set_cooldown_", "")
-            if value == "once":
-                save_settings({"cooldownMode": "once"})
-                reset_all_cycles()
-            else:
-                save_settings({"cooldownMode": "interval", "cooldownSeconds": int(value)})
-            await event.edit("✅ Kutish vaqti yangilandi! 🎉\n\n📋 Asosiy menyu:", buttons=main_menu())
-        elif data == "reaction_menu":
-            await event.edit("😀 Reaksiya sozlamalari:", buttons=reaction_menu())
-        elif data == "toggle_react_enabled":
-            save_settings({"autoReactEnabled": not settings.get("autoReactEnabled", True)})
-            await event.edit("😀 Reaksiya sozlamalari:", buttons=reaction_menu())
-        elif data == "set_reaction_random":
-            save_settings({"reactionMode": "random"})
-            await event.answer("🎲 Random reaksiya rejimi tanlandi!")
-            await event.edit("😀 Reaksiya sozlamalari:", buttons=reaction_menu())
-        elif data == "set_reaction_custom":
-            pending_action[sender.id] = "reaction_emoji"
-            await event.respond("✍️ Doimiy ishlatiladigan emojini yuboring (masalan: ❤️):")
-        elif data == "status":
-            await event.edit(status_text(), buttons=main_menu(), parse_mode="html")
-        elif data == "back_main":
-            await event.edit("📋 Asosiy menyu:", buttons=main_menu())
-    except Exception as e:
-        print(f"⚠️ Callback xatoligi: {e}")
+        else:
+            # Tasdiqlash kutilmoqda yoki yangi user
+            user_info = {
+                "username": getattr(sender, "username", None) or "noma'lum",
+                "first_name": getattr(sender, "first_name", "") or "",
+                "last_name": getattr(sender, "last_name", "") or "",
+            }
+            add_pending_approval(sender_id, user_info)
+            
+            # Admin'ga bildirishnoma
+            await notify_owner(
+                f"🔔 <b>YANGI REQUEST!</b>\n\n"
+                f"User: {escape_html(build_display_name(sender))}\n"
+                f"ID: <code>{sender_id}</code>\n\n"
+                f"Tasdiqlash uchun: /approve_{sender_id}\n"
+                f"Rad etish uchun: /deny_{sender_id}"
+            )
+            
+            await event.respond(
+                "👋 Xush kelibsiz! 🎯\n\n"
+                "Siz bu botni birinchi marta ishlatmoqchi. Admin'dan ruxsat so'raldi.\n"
+                "Admin tasdiqlagunga qadar kutib turing... ⏳",
+                parse_mode="html"
+            )
 
+
+@bot_client.on(events.NewMessage(pattern=r"/approve_(\d+)"))
+async def approve_handler(event):
+    sender = await event.get_sender()
+    if not is_owner(sender):
+        await event.respond("❌ Sizda huquq yo'q!")
+        return
+    
+    # Regex'dan user_id'ni olamiz
+    user_id = int(event.pattern_match.group(1))
+    
+    approve_user(user_id)
+    
     try:
-        await event.answer()
-    except Exception:
-        pass
+        await bot_client.send_message(
+            user_id,
+            "✅ TASDIQLANDINGIZ! 🎉\n\n"
+            "Endi botni to'liq ishlatishingiz mumkin. /start bosing!"
+        )
+    except Exception as e:
+        print(f"⚠️ User'ga bildirishnoma yuborishda xatolik: {e}")
+    
+    await event.respond(f"✅ User {user_id} tasdiqlandi!")
 
 
+@bot_client.on(events.NewMessage(pattern=r"/deny_(\d+)"))
+async def deny_handler(event):
+    sender = await event.get_sender()
+    if not is_owner(sender):
+        await event.respond("❌ Sizda huquq yo'q!")
+        return
+    
+    user_id = int(event.pattern_match.group(1))
+    
+    deny_user(user_id)
+    
+    try:
+        await bot_client.send_message(
+            user_id,
+            "❌ Sizning so'rovingiz rad etildi.\n\n"
+            "Admin'ga murojaat qiling."
+        )
+    except Exception as e:
+        print(f"⚠️ User'ga bildirishnoma yuborishda xatolik: {e}")
+    
+    await event.respond(f"❌ User {user_id} rad etildi!")
+
+
+# ============================================================
+# Boshqa komandalar va tugmalar — faqat ADMIN uchun
+# ============================================================
+
+@bot_client.on(events.NewMessage(pattern=r"^(🔐 Login|/login)$"))
+async def login_button(event):
+    sender = await event.get_sender()
+    if not is_owner(sender):
+        await event.respond("❌ Sizda huquq yo'q!")
+        return
+    await event.respond("🔐 Login jarayoni boshlandi...")
+    await login_flow()
+
+
+@bot_client.on(events.NewMessage(pattern=r"^(📱 Online/Offline|/mode)$"))
+async def mode_button(event):
+    sender = await event.get_sender()
+    if not is_owner(sender):
+        await event.respond("❌ Sizda huquq yo'q!")
+        return
+    
+    settings = get_settings()
+    current = settings.get("mode", "online")
+    new_mode = "offline" if current == "online" else "online"
+    
+    save_settings({"mode": new_mode})
+    emoji = "🔴 OFFLINE" if new_mode == "offline" else "🟢 ONLINE"
+    await event.respond(f"✅ Rejim o'zgartirildi: {emoji}", buttons=main_menu())
+
+
+@bot_client.on(events.NewMessage(pattern=r"^(🔄 Yangilash|/refresh)$"))
+async def refresh_button(event):
+    sender = await event.get_sender()
+    if not is_owner(sender):
+        await event.respond("❌ Sizda huquq yo'q!")
+        return
+    
+    settings = get_settings()
+    mode_emoji = "🔴 OFFLINE" if settings.get("mode") == "offline" else "🟢 ONLINE"
+    
+    info = (
+        f"📊 <b>Hozirgi sozlamalar:</b>\n\n"
+        f"{mode_emoji} <b>Rejim:</b> {settings.get('mode')}\n"
+        f"💬 <b>Avto-javob:</b> {escape_html(settings.get('autoReplyText', ''))}\n"
+        f"😀 <b>Reaksiya:</b> {settings.get('reactionMode')} ({settings.get('fixedReaction')})\n"
+        f"⏱ <b>Cooldown:</b> {settings.get('cooldownSeconds')} sek"
+    )
+    
+    await event.respond(info, buttons=main_menu(), parse_mode="html")
+
+
+@bot_client.on(events.NewMessage(pattern=r"^(💬 Avto-javob matni|/reply_text)$"))
+async def reply_text_button(event):
+    sender = await event.get_sender()
+    if not is_owner(sender):
+        await event.respond("❌ Sizda huquq yo'q!")
+        return
+    
+    pending_action[sender.id] = "reply_text"
+    await event.respond(
+        "✍️ Yangi avto-javob matni yuboring:",
+        parse_mode="html"
+    )
+
+
+@bot_client.on(events.NewMessage(pattern=r"^(😀 Reaksiya|/reaction)$"))
+async def reaction_button(event):
+    sender = await event.get_sender()
+    if not is_owner(sender):
+        await event.respond("❌ Sizda huquq yo'q!")
+        return
+    
+    pending_action[sender.id] = "reaction_emoji"
+    await event.respond("😀 Doimiy reaksiya emoji'sini yuboring yoki 'random' yozing:")
+
+
+@bot_client.on(events.NewMessage(pattern=r"^(⏱ Cooldown|/cooldown)$"))
+async def cooldown_button(event):
+    sender = await event.get_sender()
+    if not is_owner(sender):
+        await event.respond("❌ Sizda huquq yo'q!")
+        return
+    
+    await event.respond(
+        "⏱ Cooldown rejimini tanlang:",
+        buttons=[
+            [Button.text("🔂 Har bir user uchun", resize=True)],
+            [Button.text("⏱ 5 min", resize=True), Button.text("⏱ 10 min", resize=True)],
+            [Button.text("⏱ 30 min", resize=True), Button.text("⏱ 1 soat", resize=True)],
+        ]
+    )
+
+
+@bot_client.on(events.NewMessage(pattern=r"^(📋 Tasdiqlash kutilanayotganlar|/pending)$"))
+async def pending_approvals(event):
+    sender = await event.get_sender()
+    if not is_owner(sender):
+        await event.respond("❌ Sizda huquq yo'q!")
+        return
+    
+    perms = get_permissions()
+    pending = {k: v for k, v in perms.items() if not v.get("approved", False)}
+    
+    if not pending:
+        await event.respond("✅ Tasdiqlash kutilayotganlari yo'q!")
+        return
+    
+    text = "📋 <b>Tasdiqlash kutilayotganlar:</b>\n\n"
+    for user_id, info in pending.items():
+        username = info.get("username", "noma'lum")
+        first = info.get("first_name", "")
+        text += (
+            f"👤 {escape_html(first)} (@{escape_html(username)})\n"
+            f"ID: <code>{user_id}</code>\n"
+            f"→ /approve_{user_id} yoki /deny_{user_id}\n\n"
+        )
+    
+    await event.respond(text, parse_mode="html")
+
+
+# Cooldown va Reaksiya tugmalaridan keying javobi
 @bot_client.on(events.NewMessage(incoming=True))
-async def on_generic_message(event):
-    if not event.is_private:
-        return
-    text = (event.raw_text or "").strip()
-    if not text or text.startswith("/"):
-        return
-
+async def handle_admin_input(event):
     sender = await event.get_sender()
     if not is_owner(sender):
         return
-
-    # 1️⃣ Avval login oqimi (telefon/kod/parol) javob kutayotgan bo'lsa, shu xabar O'SHANGA boradi
+    
+    text = event.message.message or ""
+    
+    # Login kutuvchi
     global login_future
     if login_future is not None and not login_future.done():
         login_future.set_result(text)
         return
-
-    # 2️⃣ Aks holda — oddiy sozlama kutuvlari (avto-javob matni / reaksiya emoji)
+    
+    # Pending action'lar
     state = pending_action.get(sender.id)
     if not state:
         return
-
+    
     if state == "reply_text":
         save_settings({"autoReplyText": text})
         pending_action.pop(sender.id, None)
         await event.respond("✅ Avto-javob matni muvaffaqiyatli yangilandi! 🎉", buttons=main_menu())
     elif state == "reaction_emoji":
-        save_settings({"reactionMode": "fixed", "fixedReaction": text})
+        if text.lower() == "random":
+            save_settings({"reactionMode": "random"})
+            await event.respond("✅ Random reaksiya o'rnatildi! 🎉", buttons=main_menu())
+        else:
+            save_settings({"reactionMode": "fixed", "fixedReaction": text})
+            await event.respond(f"✅ Doimiy reaksiya o'rnatildi: {text} 🎉", buttons=main_menu())
         pending_action.pop(sender.id, None)
-        await event.respond(f"✅ Doimiy reaksiya o'rnatildi: {text} 🎉", buttons=main_menu())
 
 
 # ============================================================
@@ -442,7 +588,6 @@ async def login_flow():
     phone_code_hash = sent.phone_code_hash
     signed_in = False
 
-    # ✅ Bir xil phone_code_hash bilan FAQAT kodni qaytadan so'raymiz (yangi SMS YUBORILMAYDI)
     for _ in range(5):
         code = await ask_owner("✉️ Telegramdan SMS/xabar orqali kelgan kodni yuboring:")
         try:
@@ -481,6 +626,10 @@ async def login_flow():
         f"<code>{escape_html(session_str)}</code>\n\n"
         "⚠️ Bu qiymatni hech kim bilan baham ko'rmang!"
     )
+
+
+async def wait_for_owner_ready():
+    await owner_ready_event.wait()
 
 
 async def ensure_user_login():
@@ -538,7 +687,6 @@ async def on_user_new_message(event):
     sender = await event.get_sender()
     sender_name = build_display_name(sender)
 
-    # 🗂 Edit/delete kuzatish uchun keshga yozamiz
     cache_message(message.id, {
         "chatId": chat_id,
         "text": message.message or "",
@@ -547,10 +695,8 @@ async def on_user_new_message(event):
         "isPrivate": event.is_private,
     })
 
-    # 😀 Avto-reaksiya (shaxsiy va guruh xabarlariga)
     await send_auto_reaction(message)
 
-    # 💬 Avto-javob faqat shaxsiy xabarlar uchun
     if not event.is_private:
         return
 
@@ -596,7 +742,7 @@ async def on_user_message_deleted(event):
     for msg_id in event.deleted_ids:
         cached = get_cached_message(msg_id)
         if not cached:
-            continue  # bizda bu xabar haqida ma'lumot yo'q
+            continue
 
         deleted_sender_name = cached.get("senderName") or "Noma'lum"
         deleted_text = cached.get("text") or "(matnsiz xabar) 📎"
@@ -615,6 +761,7 @@ async def main():
 
     print("🤖 Boshqaruv bot ulanmoqda...")
     await bot_client.start(bot_token=BOT_TOKEN)
+    owner_ready_event.set()
     print("✅ Boshqaruv bot ishga tushdi! Telegramda botingizga /start yozing.")
 
     await ensure_user_login()
