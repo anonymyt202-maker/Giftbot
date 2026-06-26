@@ -271,7 +271,6 @@ const KB = {
     main: () => ({ reply_markup: { inline_keyboard: [
         [{ text:'🎁 Gift sotib olish', callback_data:'buy_gift' }],
         [{ text:'💼 Hisobim', callback_data:'balance' }, { text:'👥 Referal', callback_data:'referral' }],
-        [{ text:'🎮 O\'yinlar', callback_data:'games' }],
     ]}}),
 
     balance: () => ({ reply_markup: { inline_keyboard: [
