@@ -38,12 +38,10 @@ const DB = {
     claims  : path.join(__dirname, 'used_claims.json'),
 };
 
-let REFERRAL_REWARD = 2;
-const REFERRAL_PCT  = 2;
+let REFERRAL_REWARD = 2;           // /start da referal olish (stars)
+let REFERRAL_PCT    = 2;           // Gift sotib olganda referal % (uz men topda admin edit qila)
+let REFERRAL_GIFT_BONUS_STARS = 1; // Gift sotib olganda referal bonus (stars)
 const DAILY_MS      = 864e5;
-const SLOT_JP       = 64;
-const SLOT_LEM      = 1;
-const THREE_SAME    = new Set([1, 22, 43, 64]);
 
 const bot = new Telegraf(BOT_TOKEN);
 const ST  = {};
@@ -77,14 +75,25 @@ async function tgInit(str = '') {
 }
 
 // Gift yuborish: izohli yoki izohsiz
-async function sendGiftGramJS(toUserId, tgGiftId, anonymous = false, message = null) {
+async function sendGiftGramJS(toUserId, tgGiftId, anonymous = false, message = null, senderInfo = null) {
     if (!tgClient || !tgConnected) return { ok: false, error: 'TG hisob ulanmagan' };
     try {
         let peer;
         try {
             peer = await tgClient.getInputEntity(Number(toUserId));
         } catch {
-            return { ok: false, error: `Foydalanuvchi (${toUserId}) topilmadi. iltimos @it_d_user ga xabar yuborib qo'ying va qayta gift sotib oling.` };
+            // USER_NOT_FOUND yoki PEER_ID_INVALID — spam account
+            // Admin akkauntga spam xabari yuborish
+            if (senderInfo) {
+                try {
+                    await bot.telegram.sendMessage(
+                        ADMIN_ID,
+                        `⚠️ <b>Gift Spam Ogohlantirish</b>\n\nFoydalanuvchi: ${toUserId}\nGift: ${tgGiftId}\nYuboruvchi: @${senderInfo.username} (<code>${senderInfo.userId}</code>)\n\nBotda chat ochmagan yoki spam account deb belgilangan.`,
+                        { parse_mode: 'HTML' }
+                    );
+                } catch { }
+            }
+            return { ok: false, error: 'spam_account' };
         }
 
         // Izoh ob'ekti
@@ -111,9 +120,9 @@ async function sendGiftGramJS(toUserId, tgGiftId, anonymous = false, message = n
         return { ok: true, error: null };
     } catch (e) {
         console.error('sendGiftGramJS:', e.message);
-        // USER_NOT_FOUND yoki PEER_ID_INVALID — bot bilan chatga kirmagan
+        // USER_NOT_FOUND yoki PEER_ID_INVALID — spam account
         if (e.message.includes('USER_NOT_FOUND') || e.message.includes('PEER_ID_INVALID') || e.message.includes('USER_PRIVACY')) {
-            return { ok: false, error: 'user_not_started' };
+            return { ok: false, error: 'spam_account' };
         }
         if (e.message.includes('BALANCE_TOO_LOW')) {
             return { ok: false, error: 'balance_too_low' };
@@ -281,20 +290,6 @@ const KB = {
         [{ text:'⬅️ Bosh menyu',         callback_data:'main'            }],
     ]}}),
 
-    games: () => ({ reply_markup: { inline_keyboard: [
-        [{ text:'🎲 Zar',callback_data:'game_dice'},{text:'⚽ Futbol',callback_data:'game_football'},{text:'🏀 Basketbol',callback_data:'game_basketball'}],
-        [{ text:'🎯 Darts',callback_data:'game_darts'},{text:'🎰 Slotlar',callback_data:'game_slots'}],
-        [{ text:'📥 Stars kiritish',callback_data:'dep_stars'},{text:'💸 Yechish',callback_data:'withdraw'}],
-        [{ text:'🎁 Kunlik bonus',callback_data:'daily'}],
-        [{ text:'⬅️ Bosh menyu',callback_data:'main'}],
-    ]}}),
-
-    bet: g => ({ reply_markup: { inline_keyboard: [
-        [{text:'1 ⭐',callback_data:`bet_${g}_1`},{text:'5 ⭐',callback_data:`bet_${g}_5`},{text:'10 ⭐',callback_data:`bet_${g}_10`}],
-        [{text:'25 ⭐',callback_data:`bet_${g}_25`},{text:'50 ⭐',callback_data:`bet_${g}_50`},{text:'100 ⭐',callback_data:`bet_${g}_100`}],
-        [{text:'✏️ Boshqa',callback_data:`bet_${g}_custom`},{text:'⬅️ Orqaga',callback_data:'games'}],
-    ]}}),
-
     admin: () => {
         const st = tgConnected ? '🟢 Ulangan' : '🔴 Ulanmagan';
         return { reply_markup: { inline_keyboard: [
@@ -303,6 +298,7 @@ const KB = {
             [{ text:'🎁 Gift qo\'shish',  callback_data:'adm_addgift'  }, { text:'🗑 Gift o\'chirish',  callback_data:'adm_rmgift'  }],
             [{ text:'✏️ Gift narxi edit', callback_data:'adm_editgift' }],
             [{ text:'📺 Kanal qo\'shish', callback_data:'adm_addch'    }, { text:'❌ Kanal o\'chirish', callback_data:'adm_rmch'    }],
+            [{ text:'👥 Referral sozlama', callback_data:'adm_ref_settings' }],
             [{ text:'📨 UZS so\'rovlar',  callback_data:'adm_deps'     }, { text:'👤 Foydalanuvchi',   callback_data:'adm_users'   }],
             [{ text:'📥 /getusers — JSON yuklab olish', callback_data:'adm_dl_users' }],
             [{ text:'📥 /getgifts — JSON yuklab olish', callback_data:'adm_dl_gifts' }],
@@ -403,44 +399,6 @@ async function processBuyGift(ctx, gift, opts = {}) {
     );
 }
 
-// ─── O'YIN LOGIKASI ────────────────────────────────────────────
-const calcDice = (v,b) => { if(v===6)return{win:b*2,msg:'🎉 6 tushdi! 2×!'}; if(v===5)return{win:Math.floor(b*1.5),msg:'🎊 5 tushdi! 1.5×!'}; if(v===4)return{win:b,msg:'🙂 4 tushdi. Qaytarildi.'}; if(v===3)return{win:Math.floor(b*0.5),msg:'😕 3 tushdi. Yarmi.'}; return{win:0,msg:`😢 ${v} tushdi. Yutqazdingiz!`}; };
-const calcFoot = (v,b) => v>=3?{win:Math.floor(b*1.44),msg:'⚽ GOL! 1.44×!'}:{win:0,msg:'❌ Yutqazdingiz.'};
-const calcBall = (v,b) => v>=4?{win:Math.floor(b*1.5),msg:'🏀 HIT! 1.5×!'}:{win:0,msg:'❌ Yutqazdingiz.'};
-const calcDart = (v,b) => { if(v===6)return{win:b*2,msg:'🎯 MARKAZ! 2×!'}; if(v>=4)return{win:Math.floor(b*1.5),msg:'🎯 Yaqin! 1.5×!'}; return{win:0,msg:'❌ Yutqazdingiz.'}; };
-const calcSlot = (v,b) => { if(v===SLOT_JP)return{win:b*5,bonus:0,msg:'🎰 777 JACKPOT! 5×! 🎉'}; if(v===SLOT_LEM)return{win:b*2,bonus:10,msg:'🍋🍋🍋 2× + 10⭐!'}; if(THREE_SAME.has(v))return{win:b*2,bonus:0,msg:'🎰 3 bir xil! 2×!'}; return{win:0,bonus:0,msg:'❌ Yutqazdingiz.'}; };
-const GAMES = {
-    dice      :{ name:'🎲 Zar',      emoji:'🎲', calc:calcDice, rule:'6→2× | 5→1.5× | 4→qaytarildi | 3→0.5× | 1-2→lost' },
-    football  :{ name:'⚽ Futbol',   emoji:'⚽', calc:calcFoot, rule:'3-5→1.44× | 1-2→lost' },
-    basketball:{ name:'🏀 Basketbol',emoji:'🏀', calc:calcBall, rule:'4-5→1.5× | 1-3→lost' },
-    darts     :{ name:'🎯 Darts',    emoji:'🎯', calc:calcDart, rule:'6→2× | 4-5→1.5× | 1-3→lost' },
-    slots     :{ name:'🎰 Slotlar',  emoji:'🎰', calc:calcSlot, rule:'777→5× | 🍋→2×+10⭐ | 3bir→2× | lost' },
-};
-async function playGame(ctx, game, bet) {
-    const userId = ctx.from.id, stars = await getStars(userId);
-    if (stars < bet) return ctx.reply(`❌ Yetarli emas! Sizda: ${stars} ⭐`, KB.games());
-    if (game === 'slots') {
-        const u = await getUser(userId), last = u?.lastSlotsAt ? new Date(u.lastSlotsAt).getTime() : 0, ela = Date.now() - last;
-        if (ela < DAILY_MS) return ctx.reply(`⏰ Kunlik slotlar!\nKeyingi: <b>${remStr(DAILY_MS-ela)}</b>`, { parse_mode:'HTML', ...KB.games() });
-        await upsertUser(userId, { lastSlotsAt: new Date().toISOString() });
-    }
-    await deductStars(userId, bet);
-    const gi = GAMES[game];
-    await ctx.reply(`🎮 <b>${gi.name}</b>\n💰 Tikish: ${bet} ⭐\n⏳ Natijani kuting...`, { parse_mode:'HTML' });
-    const dm = await ctx.replyWithDice({ emoji: gi.emoji }), value = dm.dice.value;
-    const res = gi.calc(value, bet), win = res.win||0, bonus = res.bonus||0, total = win+bonus;
-    if (total > 0) await addStars(userId, total);
-    const nb = await getStars(userId), net = total - bet;
-    await sleep(3500);
-    await ctx.reply(
-        `🎮 <b>${gi.name} natijasi</b>\n\n🎲 Zar: <b>${value}</b>\n${res.msg}\n\n` +
-        `💰 Tikish: ${bet} ⭐\n`+(win>0?`🏆 Yutish: +${win} ⭐\n`:'')+
-        (bonus>0?`🎁 Bonus: +${bonus} ⭐\n`:'')+
-        `📊 O'zgarish: <b>${net>=0?'+':''}${net} ⭐</b>\n💎 Balans: <b>${nb} ⭐</b>`,
-        { parse_mode:'HTML', ...KB.games() }
-    );
-}
-
 // ═══════════════════════════════════════════════════════════════
 //  HANDLERS
 // ═══════════════════════════════════════════════════════════════
@@ -491,7 +449,7 @@ bot.start(async ctx => {
                 { parse_mode:'HTML' }
             );
 
-            const res = await sendGiftGramJS(userId, gift.telegramId || gift.id, anon);
+            const res = await sendGiftGramJS(userId, gift.telegramId || gift.id, anon, null, { userId: senderId, username: sender?.username });
 
             if (res.ok) {
                 // Linkni bir marta ishlatilgan deb belgilash
@@ -500,9 +458,9 @@ bot.start(async ctx => {
                     `✅ <b>Gift yuborildi!</b>\n🎁 ${gift.name}\n💝 ${sName} tomonidan`,
                     { parse_mode:'HTML', ...KB.main() }
                 );
-            } else if (res.error === 'user_not_started') {
+            } else if (res.error === 'spam_account') {
                 return ctx.reply(
-                    `❌ <b>Xato!</b>\n\nGift yuborish uchun siz avval bot bilan chat ochgan bo'lishingiz kerak.\n\nBot bilan bir marta /start bosing, so'ng havolani qaytadan oching.`,
+                    `❌ <b>Xato!</b>\n\nUlangan akkaunt spam deb belgilangan yoki noto'g'ri bo'lishi mumkin.\n\n📞 @termux_chi ga xabar yuborib, qayta gift sotib oling.`,
                     { parse_mode:'HTML' }
                 );
             } else {
@@ -712,9 +670,24 @@ bot.action('gconfirm_yes', async ctx => {
 
     await ctx.reply('⏳ Gift yuborilmoqda...');
 
-    const res = await sendGiftGramJS(targetId, gift.telegramId || gift.id, opts.anonymous || false, opts.message || null);
+    const res = await sendGiftGramJS(targetId, gift.telegramId || gift.id, opts.anonymous || false, opts.message || null, { userId, username: ctx.from.username });
 
     if (res.ok) {
+        // Referral bonus berish (gift sotib olgan odam uchun)
+        const user = await getUser(userId);
+        if (user?.invitedBy) {
+            const rb = Math.floor(price * REFERRAL_PCT / 100);
+            if (rb > 0) { 
+                await addStars(user.invitedBy, rb); 
+                try{await bot.telegram.sendMessage(user.invitedBy,`💰 Referalingiz gift sotib oldi!\n⭐ +${rb} Stars`,{parse_mode:'HTML'});}catch{} 
+            }
+            // Bonus stars
+            if (REFERRAL_GIFT_BONUS_STARS > 0) {
+                await addStars(user.invitedBy, REFERRAL_GIFT_BONUS_STARS);
+                try{await bot.telegram.sendMessage(user.invitedBy,`🎁 Referral bonus!\n⭐ +${REFERRAL_GIFT_BONUS_STARS} Stars`,{parse_mode:'HTML'});}catch{}
+            }
+        }
+        
         const s = await getStars(userId), u = await getUzs(userId);
         await ctx.reply(
             `✅ <b>Gift muvaffaqiyatli yuborildi!</b>\n\n` +
@@ -732,8 +705,8 @@ bot.action('gconfirm_yes', async ctx => {
         else await addUzs(userId, price * STARS_TO_UZS);
 
         let errMsg = `❌ <b>Gift yuborishda xato!</b>\n\n`;
-        if (res.error === 'user_not_started') {
-            errMsg += `Foydalanuvchi bot bilan chat ochmagan.\n\nUlarga botni birinchi bo'lib ochishlarini so'rang.`;
+        if (res.error === 'spam_account') {
+            errMsg += `Foydalanuvchi botda chat ochmagan yoki spam account deb belgilangan.\n\n📞 @termux_chi ga xabar yuborib, qayta gift sotib oling.`;
         } else if (res.error === 'balance_too_low') {
             errMsg += `Ulangan hisobda Stars yetarli emas.\nAdmin hisobni to'ldirishi kerak.`;
         } else {
@@ -762,57 +735,21 @@ bot.action('referral', async ctx => {
     );
 });
 
-// ─── O'yinlar ──────────────────────────────────────────────────
-bot.action('games', async ctx => {
+// ─── Referal sozlamalar ────────────────────────────────────────
+bot.action('adm_ref_settings', async ctx => {
     await ctx.answerCbQuery();
-    await ctx.reply(`🎮 <b>O'yinlar</b>\n\n💎 Balans: <b>${await getStars(ctx.from.id)} ⭐</b>`, { parse_mode:'HTML', ...KB.games() });
-});
-bot.action(/^game_(dice|football|basketball|darts|slots)$/, async ctx => {
-    await ctx.answerCbQuery();
-    const game=ctx.match[1], userId=ctx.from.id;
-    if (game==='slots') {
-        const u=await getUser(userId), last=u?.lastSlotsAt?new Date(u.lastSlotsAt).getTime():0, ela=Date.now()-last;
-        if (ela<DAILY_MS) return ctx.reply(`⏰ Kunlik slotlar!\nKeyingi: <b>${remStr(DAILY_MS-ela)}</b>`,{parse_mode:'HTML',...KB.games()});
-    }
-    const gi=GAMES[game], s=await getStars(userId);
-    await ctx.reply(`${gi.name}\n\n📋 ${gi.rule}\n\n💎 Balans: ${s} ⭐\n\nTikish miqdori:`,{parse_mode:'HTML',...KB.bet(game)});
-});
-bot.action(/^bet_(dice|football|basketball|darts|slots)_(\d+|custom)$/, async ctx => {
-    await ctx.answerCbQuery();
-    const game=ctx.match[1], betStr=ctx.match[2], userId=ctx.from.id;
-    if (betStr==='custom') { ST[userId]={...ST[userId],step:'custom_bet',curGame:game}; return ctx.reply('✏️ Tikish miqdorini kiriting:'); }
-    await playGame(ctx, game, Number(betStr));
-});
-bot.action('daily', async ctx => {
-    await ctx.answerCbQuery();
-    const userId=ctx.from.id, user=await getUser(userId);
-    if (!user) return ctx.reply('❌ Xato!');
-    const last=user.lastDailyBonusAt?new Date(user.lastDailyBonusAt).getTime():0, ela=Date.now()-last;
-    if (ela<DAILY_MS) return ctx.reply(`⏰ Bonus olindi!\nKeyingi: <b>${remStr(DAILY_MS-ela)}</b>`,{parse_mode:'HTML',...KB.games()});
-    try {
-        const bi=await bot.telegram.getMe(), chat=await bot.telegram.getChat(userId);
-        if (!(chat.bio||'').toLowerCase().includes(`t.me/${bi.username}`.toLowerCase()))
-            return ctx.reply(`❌ Bio ga havolani qo'ying:\n<code>https://t.me/${bi.username}?start=${userId}</code>`,{parse_mode:'HTML',...KB.games()});
-    } catch { return ctx.reply('❌ Bio tekshirishda xato.', KB.games()); }
-    const bonus=Math.floor(Math.random()*2)+1;
-    await addStars(userId,bonus); await upsertUser(userId,{lastDailyBonusAt:new Date().toISOString()});
-    await ctx.reply(`🎁 <b>Kunlik bonus!</b>\n\n⭐ +${bonus} Stars\n💎 ${await getStars(userId)} ⭐`,{parse_mode:'HTML',...KB.games()});
-});
-bot.action('withdraw', async ctx => {
-    await ctx.answerCbQuery();
-    const s=await getStars(ctx.from.id);
-    await ctx.reply(`💸 <b>Yechish</b>\n\n💎 Balans: <b>${s} ⭐</b>`,{parse_mode:'HTML',reply_markup:{inline_keyboard:[
-        [{text:'15 ⭐',callback_data:'wd_15'},{text:'25 ⭐',callback_data:'wd_25'},{text:'50 ⭐',callback_data:'wd_50'}],
-        [{text:'⬅️ Orqaga',callback_data:'games'}],
-    ]}});
-});
-bot.action(/^wd_(\d+)$/, async ctx => {
-    await ctx.answerCbQuery();
-    const amount=Number(ctx.match[1]), userId=ctx.from.id, s=await getStars(userId);
-    if (s<amount) return ctx.reply(`❌ Yetarli emas! Sizda: ${s} ⭐`,KB.games());
-    await deductStars(userId,amount);
-    await notifyAdmin(`💸 <b>Yechish</b>\n👤 ${ctx.from.username?'@'+ctx.from.username:'—'} (<code>${userId}</code>)\n⭐ ${amount} Stars`);
-    await ctx.reply(`✅ <b>${amount} ⭐</b> yechish so'rovi yuborildi!`,{parse_mode:'HTML',...KB.games()});
+    if (ctx.from.id!==ADMIN_ID) return;
+    await ctx.reply(
+        `👥 <b>Referral Sozlamalar</b>\n\n` +
+        `🎁 /start da: <b>${REFERRAL_REWARD} ⭐</b>\n` +
+        `💰 Gift % (gift sotib olganda referal): <b>${REFERRAL_PCT}%</b>\n` +
+        `⭐ Gift bonus (har gift uchun): <b>${REFERRAL_GIFT_BONUS_STARS} ⭐</b>\n\n` +
+        `Tahrirish uchun:\n` +
+        `/ref_reward 5 — /start da 5⭐\n` +
+        `/ref_pct 3 — gift % 3%\n` +
+        `/ref_bonus 2 — bonus 2⭐`,
+        {parse_mode:'HTML',reply_markup:{inline_keyboard:[[{text:'⬅️ Admin',callback_data:'adm_panel'}]]}}
+    );
 });
 
 // ─── Payment ───────────────────────────────────────────────────
@@ -1134,7 +1071,9 @@ bot.on('text', async ctx => {
             if (text==='/admin') return ctx.reply('⚙️ <b>Admin</b>',{parse_mode:'HTML',...KB.admin()});
             if (text.startsWith('/addstars ')){const[,i,a]=text.split(/\s+/);const r=await addStars(Number(i),Number(a));await ctx.reply(r?`✅ +${a}⭐ → ${i}`:'❌ Topilmadi!');return;}
             if (text.startsWith('/adduzs ')  ){const[,i,a]=text.split(/\s+/);const r=await addUzs(Number(i),Number(a));await ctx.reply(r?`✅ +${fUzs(Number(a))} → ${i}`:'❌ Topilmadi!');return;}
-            if (text.startsWith('/stars ')   ){const n=parseInt(text.split(' ')[1],10);if(!isNaN(n)&&n>0){REFERRAL_REWARD=n;await ctx.reply(`✅ Referral: ${n} ⭐`);}return;}
+            if (text.startsWith('/ref_reward ')){const n=parseInt(text.split(' ')[1],10);if(!isNaN(n)&&n>0){REFERRAL_REWARD=n;await ctx.reply(`✅ Referral /start bonus: ${n} ⭐`);}return;}
+            if (text.startsWith('/ref_pct ')   ){const n=parseInt(text.split(' ')[1],10);if(!isNaN(n)&&n>=0){REFERRAL_PCT=n;await ctx.reply(`✅ Referral gift %: ${n}%`);}return;}
+            if (text.startsWith('/ref_bonus ')  ){const n=parseInt(text.split(' ')[1],10);if(!isNaN(n)&&n>=0){REFERRAL_GIFT_BONUS_STARS=n;await ctx.reply(`✅ Referral bonus stars: ${n}⭐`);}return;}
             if (text==='/getusers'){try{const d=await fs.readFile(DB.users);await ctx.replyWithDocument({source:d,filename:'users.json'},{caption:'📥 users.json'});}catch{await ctx.reply('❌ Fayl yo\'q.');}return;}
             if (text==='/getgifts'){try{const d=await fs.readFile(DB.gifts);await ctx.replyWithDocument({source:d,filename:'gifts.json'},{caption:'📥 gifts.json'});}catch{await ctx.reply('❌ Fayl yo\'q.');}return;}
         }
@@ -1170,10 +1109,6 @@ bot.on('text', async ctx => {
             await deductUzs(userId,uzsNeed); await addStars(userId,amount);
             await ctx.reply(`✅ <b>Konvert!</b>\n\n💵 -${fUzs(uzsNeed)}\n⭐ +${amount} Stars\n\n⭐ ${await getStars(userId)} Stars\n💵 ${fUzs(await getUzs(userId))}`,{parse_mode:'HTML',...KB.balance()});
             return;
-        }
-        if (st.step==='custom_bet'&&st.curGame) {
-            const bet=parseInt(text,10); if(isNaN(bet)||bet<=0){await ctx.reply('❌ Musbat raqam:');return;}
-            delete st.step; delete st.curGame; await playGame(ctx,st.curGame,bet); return;
         }
         if (st.step==='friend_username'&&st.selGift) {
             if (text.startsWith('/')) return;
